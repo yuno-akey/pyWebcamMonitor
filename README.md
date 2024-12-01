@@ -31,6 +31,9 @@
       <br>
       <img src="https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white">
     </td>
+    <td>
+      <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg">
+    </td>
   </tr>
 </table>
 
