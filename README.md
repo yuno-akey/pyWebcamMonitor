@@ -1,5 +1,39 @@
 # pyWebcamMonitor
 
+<table>
+  <!--header-->
+  <tr>
+    <td>License</td>
+    <td>OS</td>
+    <td>IDE</td>
+    <td>Lang</td>
+    <td>Library</td>
+    <td>Thank you!</td>
+  </tr>
+  <!--body-->
+  <tr>
+    <td>
+      <a href="./LICENSE">
+        <img src="http://img.shields.io/badge/license-MIT-blue.svg?style=flat">
+      </a>
+    </td>
+    <td>
+      <img src="https://img.shields.io/badge/Windows_11-0078d4?style=for-the-badge&logo=windows-11&logoColor=white">
+    </td>
+    <td>
+      <img src="https://img.shields.io/badge/VSCode-007ACC?style=for-the-badge&logo=visual-studio-code&logoColor=white">
+    </td>
+    <td>
+      <img src="https://img.shields.io/badge/python-3.13+-blue.svg">
+    </td>
+    <td>
+      <img src="https://img.shields.io/badge/opencv-4.10+-green.svg">
+      <br>
+      <img src="https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white">
+    </td>
+  </tr>
+</table>
+
 動体検知機能付きの監視カメラプログラムです。カメラからの映像を常時録画しながら、動体を検知した場合は別ファイルとして保存します。
 
 ## 機能
