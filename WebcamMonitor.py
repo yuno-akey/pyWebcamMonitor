@@ -9,7 +9,7 @@ def load_config():
     config_path = "config.ini"
     if not Path(config_path).exists(): # 設定ファイルが存在しない場合は作成
         config["VIDEO"] = {
-            "SOURCE": 0, # カメラソース (デフォルトは0=内蔵カメラ)
+            "SOURCE": 0, # カメラソース (デフォルトは0=内蔵カメラもしくはUSBカメラ)
             "MOTION_PATH": "motion-detected/" # 動体検知時の保存パス
         }
         with open(config_path, "w", encoding = 'utf-8') as configfile:
