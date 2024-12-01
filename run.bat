@@ -17,7 +17,7 @@ PAUSE
 goto end
 
 :message
-echo "There is no valid Python3.13.0 or higher available. Please install Python ^>=3.13.0."
+echo "There is no valid Python 3.13.0 or higher available. Please install Python ^>=3.13.0."
 PAUSE
 
 :end
