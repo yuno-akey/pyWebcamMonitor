@@ -4,19 +4,43 @@ import configparser
 from pathlib import Path
 from datetime import datetime, timedelta
 
+# デフォルト設定
+DEFAULT_CONFIG = {
+    "VIDEO": {
+        "SOURCE": "0",
+        "MOTION_PATH": "motion-detected/"
+    }
+}
+
 def load_config():
     config = configparser.ConfigParser()
     config_path = "config.ini"
+    motion_path = DEFAULT_CONFIG["VIDEO"]["MOTION_PATH"]
+
     if not Path(config_path).exists(): # 設定ファイルが存在しない場合は作成
-        config["VIDEO"] = {
-            "SOURCE": 0, # カメラソース (デフォルトは0=内蔵カメラもしくはUSBカメラ)
-            "MOTION_PATH": "motion-detected/" # 動体検知時の保存パス
-        }
+        config["VIDEO"] = DEFAULT_CONFIG["VIDEO"]
         with open(config_path, "w", encoding = 'utf-8') as configfile:
             config.write(configfile)
-        os.makedirs(config["VIDEO"]["MOTION_PATH"], exist_ok=True) # 動体検知時の保存パスを作成
     else:
+        # 設定ファイルが存在する場合は読み込み
         config.read(config_path, encoding='utf-8')
+        if not config.has_section("VIDEO"): #VIDEOセクションが存在しない場合はデフォルト設定を追加
+            config["VIDEO"] = DEFAULT_CONFIG["VIDEO"]
+            with open(config_path, "w", encoding = 'utf-8') as configfile:
+                config.write(configfile)
+
+    if not config["VIDEO"]["SOURCE"].isdigit() or int(config["VIDEO"]["SOURCE"]) < 0: # ソースが数字でないか0未満の場合はエラー
+        if isinstance(config["VIDEO"]["SOURCE"], str):
+            pass
+        else:
+            raise ValueError("Invalid source value in config file")
+
+    if not isinstance(config["VIDEO"]["MOTION_PATH"], str): # 動体検知時の保存パスが文字列でない場合はエラー
+        raise ValueError("Invalid motion path value in config file")
+    else:
+        motion_path = config["VIDEO"]["MOTION_PATH"]
+
+    os.makedirs(motion_path, exist_ok=True) # 動体検知時の保存パスを作成。既に存在する場合は無視
     return config["VIDEO"]
 
 
@@ -26,6 +50,11 @@ class VideoWriter:
     MOTION_PATH = CONFIG["MOTION_PATH"]
 
     def __init__(self, width, height, fps, path=None):
+        if width <= 0 or height <= 0:
+            raise ValueError("Invalid width or height value. Width and height must be positive integers")
+        if not isinstance(fps, (int, float)):
+            raise ValueError("Invalid fps value. FPS must be a number")
+
         self.width = width
         self.height = height
         self.fps = max(fps, 1) # fpsが0以下の場合は1に設定
@@ -44,7 +73,7 @@ class VideoWriter:
                 (self.width, self.height), 
                 1 # 1:カラー, 0:グレースケール
             )
-            if not self.writer.isOpened():
+            if not self.writer.isOpened(): # 初期化に失敗した場合は例外を発生
                 raise IOError("Failed to create VideoWriter")
         except Exception as e:
             self.release()
@@ -87,7 +116,7 @@ class CaptureVideo:
         self.fps = int(self.videoSource.get(cv2.CAP_PROP_FPS))
         if self.fps == 0:
             self.fps = 30
-        self.ACCUMULATED_WEIGHT = 0.6 #移動平均の重み (0.6が最適)
+        self.ACCUMULATED_WEIGHT = 0.6 #移動平均の重み
         self.motion_end_time = None
         try:
             self.motion_writer = None
@@ -120,14 +149,18 @@ class CaptureVideo:
 
     def showVideo(self):
         try:
-            before = None # 前フレーム
+            before = None # 前フレーム。初期値はNone
             with VideoWriter(self.width, self.height, self.fps) as default_writer:
                 while True:
                     ret, frame = self.videoSource.read()
                     if not ret: # フレームが取得できない場合は終了
                         break
+
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+                    if cv2.waitKey(int(1000 / self.fps)) == ord('q'): # qキーで終了
+                        break
+                    # 以下動体検知セクション。前フレームがNoneの場合はスキップ
                     if before is None:
                         before = gray.copy().astype("float")
                         continue
@@ -148,10 +181,8 @@ class CaptureVideo:
                         self.motion_writer.release()
                         self.motion_writer = None
 
-                    cv2.imshow('target_frame', frame)
+                    cv2.imshow('target_frame', frame) # 処理後フレームを表示
                     default_writer.write(frame)
-                    if cv2.waitKey(int(1000 / self.fps)) == ord('q'): # qキーで終了
-                        break
 
         finally:
             if self.motion_writer:
