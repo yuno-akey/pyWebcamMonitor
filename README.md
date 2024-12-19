@@ -39,6 +39,8 @@
 
 動体検知機能付きの監視カメラプログラムです。カメラからの映像を常時録画しながら、動体を検知した場合は別ファイルとして保存します。
 
+![motion-detection-sample](https://github.com/user-attachments/assets/2399fc5a-d5eb-47ce-9d37-fb096161f430)
+
 ## 機能
 
 - カメラ映像のリアルタイム表示と録画
