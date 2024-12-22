@@ -2,8 +2,7 @@ import os
 import cv2
 import camutils as cutils
 from datetime import datetime, timedelta
-
-CAMCONF = cutils.CAMCONF
+from camutils import CAMCONF
 
 
 class VideoWriter:
