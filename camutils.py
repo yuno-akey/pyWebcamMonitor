@@ -82,7 +82,7 @@ def name_file(file_index=None, motion=None, extension=".mp4"):
     file_index: int
     motion: bool
     '''
-    current_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    current_time = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
     if motion:
         return f"{CAMCONF.MOTION_PATH.value}motion_{current_time}{extension}"
     

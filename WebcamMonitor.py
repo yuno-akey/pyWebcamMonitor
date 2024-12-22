@@ -1,9 +1,10 @@
 import os
 import cv2
 import camutils as cutils
-from datetime import datetime, timedelta
+from queue import Queue
 from camutils import CAMCONF
-
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class VideoWriter:
 
@@ -24,6 +25,7 @@ class VideoWriter:
         self.max_size = cutils.mb_to_byte(CAMCONF.MAX_SIZE.value)
         self.current_file_index = 0
         self.writer = None
+        self.frame_buffer = []
 
         if path:
             self.record_path = path
@@ -52,19 +54,29 @@ class VideoWriter:
         self.start_time = datetime.now()
 
     def write(self, frame):
-        self.writer.write(frame)
+        self.frame_buffer.append(frame)
+        if len(self.frame_buffer) >= self.fps:
+            self.flush_buffer()
         if self.max_duration and (datetime.now() - self.start_time).total_seconds() >= self.max_duration:
             self.rotate_writer()
 
         if self.max_size and os.path.getsize(self.record_path) >= self.max_size:
             self.rotate_writer()
+            
+    def flush_buffer(self):
+        if self.writer:
+            for frame in self.frame_buffer:
+                self.writer.write(frame)
+            self.frame_buffer.clear()
 
     def rotate_writer(self):
+        self.flush_buffer()
         self.release()
         self.open_new_writer()
 
     def release(self):
         if self.writer:
+            self.flush_buffer()
             self.writer.release()
             self.writer = None
 
@@ -97,6 +109,19 @@ class VideoProcessor:
             
         self.motion_end_time = None
         self.motion_writer = None
+        
+        self.stopped = False
+        self.frame_queue = Queue(maxsize=60)
+        self.pool = ThreadPoolExecutor(max_workers=2)
+        
+    def capture_frames(self):
+        while not self.stopped:
+            ret, frame = self.video_source.read()
+            if not ret:
+                self.stopped = True
+                break
+            if not self.frame_queue.full():
+                self.frame_queue.put(frame)
 
     def detect_motion(self, frame, gray, before):
 
@@ -123,27 +148,23 @@ class VideoProcessor:
             print(f"cv2Error: {str(e)}")
             return False
 
-    def process_video(self):
+    def process_frames(self):
 
         try:
             before = None
             with VideoWriter(self.width, self.height, self.fps) as default_writer:
-                while True:
-                    ret, frame = self.video_source.read()
-                    if not ret:
-                        break
-
+                while not self.stopped or not self.frame_queue.empty():
+                    if self.frame_queue.empty():
+                        continue
+                    
+                    frame = self.frame_queue.get()
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-                    if cv2.waitKey(int(1000 / self.fps)) == ord('q'):
-                        break
                     
                     if before is None:
                         before = gray.copy().astype("float")
                         continue
 
                     cv2.accumulateWeighted(gray, before, CAMCONF.WEIGHT.value)
-
                     if self.detect_motion(frame, gray, before):
                         if self.motion_writer is None:
                             self.motion_writer = VideoWriter(
@@ -157,18 +178,30 @@ class VideoProcessor:
                     elif self.motion_writer and datetime.now() > self.motion_end_time:
                         self.motion_writer.release()
                         self.motion_writer = None
-
-                    cv2.imshow('target_frame', frame)
+                        
                     default_writer.write(frame)
+                    cv2.imshow('target_frame', frame)
+                    if cv2.waitKey(1) == ord('q'):
+                        self.release()
 
         finally:
             if self.motion_writer:
                 self.motion_writer.release()
             if self.video_source:
                 self.video_source.release()
-            cv2.destroyAllWindows()
+                
+    def process_video(self):
+        futures = []
+        futures.append(self.pool.submit(self.capture_frames))
+        futures.append(self.pool.submit(self.process_frames))
+        
+        for future in as_completed(futures):
+            pass
+        
+        self.release()
 
     def release(self):
+        self.stopped = True
         if hasattr(self, 'motion_writer') and self.motion_writer:
             self.motion_writer.release()
             self.motion_writer = None
@@ -177,6 +210,8 @@ class VideoProcessor:
         if hasattr(self, 'video_source') and self.video_source:
             self.video_source.release()
             self.video_source = None
+        cv2.destroyAllWindows()
+        self.pool.shutdown(wait=True)
 
     def close(self):
         self.release()
