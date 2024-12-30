@@ -2,8 +2,10 @@ import os
 import cv2
 import notifier
 import camutils as cutils
+from queue import Queue
 from camutils import CAMCONF
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class VideoWriter:
@@ -124,6 +126,17 @@ class VideoProcessor:
 
         self.notification_method = CAMCONF.NOTIFICATION_METHOD.value
         self.notifier = None
+        
+        self.stopped = False
+        self.frame_queue = Queue(maxsize=60)
+        self.pool = ThreadPoolExecutor(max_workers=2)
+
+    def capture_frames(self):
+        while True:
+            ret, frame = self.video_source.read()
+            if not ret:
+                break
+            self.frame_queue.put(frame)
 
     def detect_motion(self, frame, gray, before):
 
@@ -155,11 +168,11 @@ class VideoProcessor:
         try:
             with VideoWriter(self.width, self.height, self.fps) as default_writer:
                 before = None
-                while True:
-                    ret, frame = self.video_source.read()
-                    if not ret:
-                        break
+                while not self.stopped or not self.frame_queue.empty():
+                    if self.frame_queue.empty():
+                        continue
                     
+                    frame = self.frame_queue.get()
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     
                     if before is None:
@@ -202,12 +215,25 @@ class VideoProcessor:
                     default_writer.write(frame)
                     cv2.imshow('target_frame', frame)
                     if cv2.waitKey(1) == ord('q'):
+                        cv2.destroyAllWindows()
                         break
 
-        finally:
+        except Exception as e:
+            print(f"Error occured: {str(e)}")
             self.release()
+            
+    def thread_executor(self):
+        futures = []
+        futures.append(self.pool.submit(self.capture_frames))
+        futures.append(self.pool.submit(self.process_frames))
+        
+        for future in as_completed(futures):
+            pass
+        
+        self.release()
 
     def release(self):
+        self.stopped = True
         if hasattr(self, 'motion_writer') and self.motion_writer:
             self.motion_writer.release()
             self.motion_writer = None
@@ -221,7 +247,7 @@ class VideoProcessor:
             self.notifier.close_notifier()
             self.notifier = None
 
-        cv2.destroyAllWindows()
+        self.pool.shutdown(wait=True)
 
     def close(self):
         self.release()
@@ -237,7 +263,7 @@ def main():
     source = CAMCONF.CAMERA_SOURCE.value
     print(f"trying to open camera source: {source}")
     with VideoProcessor(source) as processor:
-        processor.process_frames()
+        processor.thread_executor()
 
 
 if __name__ == "__main__":
