@@ -1,10 +1,12 @@
 import os
 import cv2
+import notifier
 import camutils as cutils
 from queue import Queue
 from camutils import CAMCONF
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 class VideoWriter:
 
@@ -87,9 +89,7 @@ class VideoWriter:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.release()
-
-    def __del__(self):
+        print(exc_type, exc_val, exc_tb)
         self.release()
 
 
@@ -97,7 +97,7 @@ class VideoProcessor:
 
     def __init__(self, source):
 
-        self.video_source = cv2.VideoCapture(source)
+        self.video_source = cv2.VideoCapture(source, cv2.CAP_DSHOW)
         if not self.video_source.isOpened():
             raise ValueError(f"Failed to open video source: {source}")
 
@@ -114,14 +114,20 @@ class VideoProcessor:
         self.frame_queue = Queue(maxsize=60)
         self.pool = ThreadPoolExecutor(max_workers=2)
         
+        self.notification_method = CAMCONF.NOTIFICATION_METHOD.value
+        self.notifier = None
+        
     def capture_frames(self):
-        while not self.stopped:
-            ret, frame = self.video_source.read()
-            if not ret:
-                self.stopped = True
-                break
-            if not self.frame_queue.full():
-                self.frame_queue.put(frame)
+        try:
+            while self.stopped is False:
+                ret, frame = self.video_source.read()
+                if not ret:
+                    self.stopped = True
+                    break
+                if not self.frame_queue.full():
+                    self.frame_queue.put(frame)
+        except Exception as e:
+            raise OSError(f"Failed to capture frames: {str(e)}")
 
     def detect_motion(self, frame, gray, before):
 
@@ -175,7 +181,25 @@ class VideoProcessor:
                             )
                             self.motion_end_time = datetime.now() + timedelta(minutes=CAMCONF.MOTION_RECORD_LENGTH.value)
                         self.motion_writer.write(frame)
+                        
+                        # initialize Notifier and send notification
+                        
+                        if self.notifier is None:
+                            get_notifier_class = getattr(notifier, f"{self.notification_method}Notifier")
+                            self.notifier = get_notifier_class()
+                            self.notifier.initialize_notifier()
+                            self.notifier.process_notification(f"Motion Detected: {cutils.get_current_time()}")
+                            self.notifier.notify_to_admin()
+                            
+                        elif self.notifier is not None and self.notifier.status == self.notifier.STATUS.WAITING:
+                            self.notifier.process_notification(f"Motion Detected: {cutils.get_current_time()}")
+                            self.notifier.notify_to_admin()
+                            
+                        elif self.notifier is not None and self.notifier.status == self.notifier.STATUS.THROTTLED:
+                            pass
+                         
                     elif self.motion_writer and datetime.now() > self.motion_end_time:
+                        self.notifier.set_notifier_status_waiting()
                         self.motion_writer.release()
                         self.motion_writer = None
                         
@@ -189,6 +213,8 @@ class VideoProcessor:
                 self.motion_writer.release()
             if self.video_source:
                 self.video_source.release()
+            if self.notifier:
+                self.notifier.close_notifier()
                 
     def process_video(self):
         futures = []
@@ -196,6 +222,7 @@ class VideoProcessor:
         futures.append(self.pool.submit(self.process_frames))
         
         for future in as_completed(futures):
+            print(future)
             pass
         
         self.release()
@@ -210,6 +237,11 @@ class VideoProcessor:
         if hasattr(self, 'video_source') and self.video_source:
             self.video_source.release()
             self.video_source = None
+            
+        if hasattr(self, 'notifier') and self.notifier:
+            self.notifier.close_notifier()
+            self.notifier = None
+
         cv2.destroyAllWindows()
         self.pool.shutdown(wait=True)
 
@@ -220,9 +252,7 @@ class VideoProcessor:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.release()
-
-    def __del__(self):
+        print(exc_type, exc_val, exc_tb)
         self.release()
 
 
