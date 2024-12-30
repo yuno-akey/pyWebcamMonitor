@@ -132,11 +132,13 @@ class VideoProcessor:
         self.pool = ThreadPoolExecutor(max_workers=2)
 
     def capture_frames(self):
-        while True:
+        while not self.stopped:
             ret, frame = self.video_source.read()
             if not ret:
+                self.stopped = True
                 break
-            self.frame_queue.put(frame)
+            if not self.frame_queue.full():
+                self.frame_queue.put(frame)
 
     def detect_motion(self, frame, gray, before):
 
@@ -178,6 +180,15 @@ class VideoProcessor:
                     if before is None:
                         before = gray.copy().astype("float")
                         continue
+                    
+                    if self.motion_writer and datetime.now() > self.motion_end_time:
+                        
+                        if self.notifier is not None:
+                            self.notifier.set_notifier_status_waiting()
+                                
+                        self.motion_writer.release()
+                        self.motion_writer = None
+                        self.motion_end_time = None
 
                     cv2.accumulateWeighted(gray, before, CAMCONF.WEIGHT.value)
                     if self.detect_motion(frame, gray, before):
@@ -206,16 +217,12 @@ class VideoProcessor:
                             
                         elif self.notifier is not None and self.notifier.status == notifier.STATUS.THROTTLED:
                             pass
-                         
-                        elif self.motion_writer and datetime.now() > self.motion_end_time:
-                            self.notifier.set_notifier_status_waiting()
-                            self.motion_writer.release()
-                            self.motion_writer = None
                         
                     default_writer.write(frame)
                     cv2.imshow('target_frame', frame)
                     if cv2.waitKey(1) == ord('q'):
                         cv2.destroyAllWindows()
+                        self.stopped = True
                         break
 
         except Exception as e:
@@ -223,14 +230,21 @@ class VideoProcessor:
             self.release()
             
     def thread_executor(self):
-        futures = []
-        futures.append(self.pool.submit(self.capture_frames))
-        futures.append(self.pool.submit(self.process_frames))
+        try:
+            futures = []
+            futures.append(self.pool.submit(self.capture_frames))
+            futures.append(self.pool.submit(self.process_frames))
         
-        for future in as_completed(futures):
-            pass
-        
-        self.release()
+            for future in as_completed(futures):
+                future.result()
+                
+        except Exception as e:
+            print(f"Error occured in thread executor: {str(e)}")
+            self.stopped = True
+            for future in futures:
+                future.cancel()
+        finally:
+            self.release()
 
     def release(self):
         self.stopped = True
