@@ -125,7 +125,7 @@ class CAMCONF(Enum):
 
 
 def get_current_time():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
 def name_file(file_index=None, motion=None, extension=".mp4"):
@@ -137,8 +137,11 @@ def name_file(file_index=None, motion=None, extension=".mp4"):
     if motion:
         return f"{CAMCONF.MOTION_PATH.value}motion_{current_time}{extension}"
     
-    if file_index is not None and isinstance(file_index, int):
-        return f"{current_time}_{file_index}{extension}"
+    if file_index is not None:
+        if isinstance(file_index, int) is False:
+            return f"{current_time}_{int(file_index)}{extension}"
+        else:
+            return f"{current_time}_{file_index}{extension}"
     
     if file_index is None and motion is None:
         raise ValueError("file_index or motion must be specified")

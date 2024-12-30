@@ -2,10 +2,8 @@ import os
 import cv2
 import notifier
 import camutils as cutils
-from queue import Queue
 from camutils import CAMCONF
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class VideoWriter:
@@ -32,11 +30,11 @@ class VideoWriter:
         if path:
             self.record_path = path
         else:
-            self.record_path = cutils.name_file(self.current_file_index)
+            self.record_path = cutils.name_file(file_index=self.current_file_index)
 
         try:
             self.open_new_writer()
-            if not self.writer.isOpened():
+            if not self.writer:
                 raise IOError("Failed to create VideoWriter")
 
         except Exception as e:
@@ -74,6 +72,7 @@ class VideoWriter:
     def rotate_writer(self):
         self.flush_buffer()
         self.release()
+        self.writer_waiting = True
         self.open_new_writer()
 
     def release(self):
@@ -89,18 +88,31 @@ class VideoWriter:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        print(exc_type, exc_val, exc_tb)
         self.release()
 
 
 class VideoProcessor:
 
     def __init__(self, source):
-
-        self.video_source = cv2.VideoCapture(source, cv2.CAP_DSHOW)
-        if not self.video_source.isOpened():
-            raise ValueError(f"Failed to open video source: {source}")
-
+        
+        self.video_source_flag = False
+        try:
+            try:
+                self.video_source = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+                self.video_source_flag = True
+            except Exception as e:
+                print(f"Failed to open video source using  DSHOW backend: {str(e)}")
+                try:
+                    self.video_source = cv2.VideoCapture(source, cv2.CAP_MSMF)
+                    self.video_source_flag = True
+                except Exception as e:
+                    print(f"Failed to open video source using MSMF backend: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Failed to open video source {source}: {str(e)}")
+        finally:
+            if self.video_source_flag is False:
+                raise OSError(f"Failed to open video source {source}")
+        
         self.width = int(self.video_source.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.video_source.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = int(self.video_source.get(cv2.CAP_PROP_FPS))
@@ -109,25 +121,9 @@ class VideoProcessor:
             
         self.motion_end_time = None
         self.motion_writer = None
-        
-        self.stopped = False
-        self.frame_queue = Queue(maxsize=60)
-        self.pool = ThreadPoolExecutor(max_workers=2)
-        
+
         self.notification_method = CAMCONF.NOTIFICATION_METHOD.value
         self.notifier = None
-        
-    def capture_frames(self):
-        try:
-            while self.stopped is False:
-                ret, frame = self.video_source.read()
-                if not ret:
-                    self.stopped = True
-                    break
-                if not self.frame_queue.full():
-                    self.frame_queue.put(frame)
-        except Exception as e:
-            raise OSError(f"Failed to capture frames: {str(e)}")
 
     def detect_motion(self, frame, gray, before):
 
@@ -157,13 +153,13 @@ class VideoProcessor:
     def process_frames(self):
 
         try:
-            before = None
             with VideoWriter(self.width, self.height, self.fps) as default_writer:
-                while not self.stopped or not self.frame_queue.empty():
-                    if self.frame_queue.empty():
-                        continue
+                before = None
+                while True:
+                    ret, frame = self.video_source.read()
+                    if not ret:
+                        break
                     
-                    frame = self.frame_queue.get()
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     
                     if before is None:
@@ -191,44 +187,27 @@ class VideoProcessor:
                             self.notifier.process_notification(f"Motion Detected: {cutils.get_current_time()}")
                             self.notifier.notify_to_admin()
                             
-                        elif self.notifier is not None and self.notifier.status == self.notifier.STATUS.WAITING:
+                        elif self.notifier is not None and self.notifier.status == notifier.STATUS.WAITING:
                             self.notifier.process_notification(f"Motion Detected: {cutils.get_current_time()}")
                             self.notifier.notify_to_admin()
                             
-                        elif self.notifier is not None and self.notifier.status == self.notifier.STATUS.THROTTLED:
+                        elif self.notifier is not None and self.notifier.status == notifier.STATUS.THROTTLED:
                             pass
                          
-                    elif self.motion_writer and datetime.now() > self.motion_end_time:
-                        self.notifier.set_notifier_status_waiting()
-                        self.motion_writer.release()
-                        self.motion_writer = None
+                        elif self.motion_writer and datetime.now() > self.motion_end_time:
+                            self.notifier.set_notifier_status_waiting()
+                            self.motion_writer.release()
+                            self.motion_writer = None
                         
                     default_writer.write(frame)
                     cv2.imshow('target_frame', frame)
                     if cv2.waitKey(1) == ord('q'):
-                        self.release()
+                        break
 
         finally:
-            if self.motion_writer:
-                self.motion_writer.release()
-            if self.video_source:
-                self.video_source.release()
-            if self.notifier:
-                self.notifier.close_notifier()
-                
-    def process_video(self):
-        futures = []
-        futures.append(self.pool.submit(self.capture_frames))
-        futures.append(self.pool.submit(self.process_frames))
-        
-        for future in as_completed(futures):
-            print(future)
-            pass
-        
-        self.release()
+            self.release()
 
     def release(self):
-        self.stopped = True
         if hasattr(self, 'motion_writer') and self.motion_writer:
             self.motion_writer.release()
             self.motion_writer = None
@@ -243,7 +222,6 @@ class VideoProcessor:
             self.notifier = None
 
         cv2.destroyAllWindows()
-        self.pool.shutdown(wait=True)
 
     def close(self):
         self.release()
@@ -252,15 +230,14 @@ class VideoProcessor:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        print(exc_type, exc_val, exc_tb)
         self.release()
 
 
-def main():
+def main():    
     source = CAMCONF.CAMERA_SOURCE.value
-    print(source)
+    print(f"trying to open camera source: {source}")
     with VideoProcessor(source) as processor:
-        processor.process_video()
+        processor.process_frames()
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ class STATUS(Enum):
 class NotifierModel(ABC):
     
     @abstractmethod
-    def initilize_notifier(self):
+    def initialize_notifier(self):
         pass
     
     @abstractmethod
@@ -51,7 +51,7 @@ class LineNotifier(NotifierModel):
         self.api_url = "https://notify-api.line.me/api/notify"
         self.status = STATUS.WAITING
         
-    def initilize_notifier(self):
+    def initialize_notifier(self):
         self.headers = {"Authorization": f"Bearer {self.token}"}
         
     def process_notification(self, message):
